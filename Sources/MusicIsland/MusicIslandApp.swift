@@ -15,10 +15,11 @@ enum Main {
 
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
-    static let windowSize = CGSize(width: 640, height: 320)
+    static let windowSize = CGSize(width: 640, height: 400)
 
     let music = MusicController()
-    lazy var island = IslandViewModel(music: music)
+    lazy var lyrics = LyricsController(music: music)
+    lazy var island = IslandViewModel(music: music, lyrics: lyrics)
 
     private var panel: NotchPanel!
     private var statusItem: NSStatusItem!
@@ -27,7 +28,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         panel = NotchPanel()
-        let host = IslandHostingView(rootView: IslandView(vm: island, music: music))
+        let host = IslandHostingView(rootView: IslandView(vm: island, music: music, lyrics: lyrics))
         host.sizingOptions = []
         panel.contentView = host
         layoutPanel()

@@ -11,6 +11,7 @@ final class IslandViewModel: ObservableObject {
 
     @Published private(set) var state: State = .closed
     @Published private(set) var showEars = false
+    @Published private(set) var showLyrics = false
     @Published var notch = CGSize(width: 185, height: 32)
 
     private var hovering = false
@@ -18,7 +19,19 @@ final class IslandViewModel: ObservableObject {
     private var peekTask: Task<Void, Never>?
     private var cancellables = Set<AnyCancellable>()
 
-    init(music: MusicController) {
+    /// Extra card height for the three-line lyrics panel.
+    static let lyricsHeight: CGFloat = 80
+
+    init(music: MusicController, lyrics: LyricsController) {
+        showLyrics = lyrics.enabled
+        lyrics.$enabled
+            .removeDuplicates()
+            .dropFirst()
+            .sink { [weak self] on in
+                withAnimation(Self.openSpring) { self?.showLyrics = on }
+            }
+            .store(in: &cancellables)
+
         music.$isPlaying.combineLatest(music.$track)
             .map { playing, track in playing && track != nil }
             .removeDuplicates()
@@ -42,7 +55,7 @@ final class IslandViewModel: ObservableObject {
         case .peek:
             return CGSize(width: max(closedWidth + 40, 320), height: notch.height + 42)
         case .expanded:
-            return CGSize(width: max(460, closedWidth + 60), height: notch.height + 186)
+            return CGSize(width: max(460, closedWidth + 60), height: notch.height + 186 + (showLyrics ? Self.lyricsHeight : 0))
         }
     }
 

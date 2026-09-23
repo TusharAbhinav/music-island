@@ -11,6 +11,7 @@ enum IslandMetrics {
 struct IslandView: View {
     @ObservedObject var vm: IslandViewModel
     @ObservedObject var music: MusicController
+    @ObservedObject var lyrics: LyricsController
     @Namespace private var ns
 
     private var expanded: Bool { vm.state == .expanded }
@@ -153,8 +154,15 @@ struct IslandView: View {
                 .opacity(music.track == nil ? 0.35 : 1)
                 .allowsHitTesting(music.track != nil)
 
-            PlaybackControls(music: music)
+            PlaybackControls(music: music, lyrics: lyrics)
                 .padding(.top, 6)
+
+            if vm.showLyrics {
+                LyricsPanel(music: music, lyrics: lyrics)
+                    .frame(height: LyricsStack.boxHeight)
+                    .padding(.top, 8)
+                    .transition(.blurReplace)
+            }
         }
         .padding(.horizontal, 18)
         .padding(.bottom, 12)
@@ -317,12 +325,24 @@ struct Scrubber: View {
 
 struct PlaybackControls: View {
     @ObservedObject var music: MusicController
+    @ObservedObject var lyrics: LyricsController
 
     var body: some View {
-        HStack(spacing: 26) {
-            IconButton(symbol: "backward.fill", size: 17) { music.previous() }
-            IconButton(symbol: music.isPlaying ? "pause.fill" : "play.fill", size: 25) { music.playPause() }
-            IconButton(symbol: "forward.fill", size: 17) { music.next() }
+        ZStack {
+            HStack(spacing: 26) {
+                IconButton(symbol: "backward.fill", size: 17) { music.previous() }
+                IconButton(symbol: music.isPlaying ? "pause.fill" : "play.fill", size: 25) { music.playPause() }
+                IconButton(symbol: "forward.fill", size: 17) { music.next() }
+            }
+
+            HStack {
+                Spacer()
+                IconButton(symbol: lyrics.enabled ? "quote.bubble.fill" : "quote.bubble", size: 13,
+                           tint: .white.opacity(lyrics.enabled ? 1 : 0.5)) {
+                    lyrics.enabled.toggle()
+                }
+                .help(lyrics.enabled ? "Hide Lyrics" : "Show Lyrics")
+            }
         }
         .frame(maxWidth: .infinity)
     }
@@ -331,6 +351,7 @@ struct PlaybackControls: View {
 struct IconButton: View {
     let symbol: String
     let size: CGFloat
+    var tint: Color = .white
     let action: () -> Void
 
     @ViewState private var hovering = false
@@ -345,7 +366,7 @@ struct IconButton: View {
                 .font(.system(size: size, weight: .semibold))
                 .contentTransition(.symbolEffect(.replace.downUp))
                 .symbolEffect(.bounce.down, value: taps)
-                .foregroundStyle(.white)
+                .foregroundStyle(tint)
                 .frame(width: size * 1.9, height: size * 1.9)
                 .background(Circle().fill(.white.opacity(hovering ? 0.12 : 0)))
                 .contentShape(Circle())
@@ -363,6 +384,129 @@ struct PressableStyle: ButtonStyle {
         configuration.label
             .scaleEffect(configuration.isPressed ? 0.84 : 1)
             .animation(.spring(response: 0.25, dampingFraction: 0.55), value: configuration.isPressed)
+    }
+}
+
+// MARK: - Lyrics
+
+struct LyricsPanel: View {
+    @ObservedObject var music: MusicController
+    @ObservedObject var lyrics: LyricsController
+
+    var body: some View {
+        Group {
+            if music.track == nil {
+                status("Lyrics appear when a song plays")
+            } else {
+                switch lyrics.state {
+                case .idle, .loading:
+                    status("Finding lyrics…")
+                case .loaded(.none):
+                    status("No lyrics for this song")
+                case .loaded(.instrumental):
+                    status("♪  Instrumental")
+                case .loaded(.plain(let lines)):
+                    PlainLyrics(lines: lines)
+                case .loaded(.synced(let lines)):
+                    SyncedLyrics(lines: lines, music: music)
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    private func status(_ text: String) -> some View {
+        Text(text)
+            .font(.system(size: 12.5, weight: .medium, design: .rounded))
+            .foregroundStyle(.white.opacity(0.4))
+            .transition(.blurReplace)
+    }
+}
+
+/// Timed lyrics: the current line bright and centered, its neighbors dimmed above and below.
+struct SyncedLyrics: View {
+    let lines: [LyricLine]
+    @ObservedObject var music: MusicController
+
+    var body: some View {
+        TimelineView(.animation(minimumInterval: 0.1, paused: !music.isPlaying)) { context in
+            // A small lead so each line lights up as it's sung, not just after.
+            LyricsStack(lines: lines, current: index(at: music.position(at: context.date) + 0.25))
+        }
+    }
+
+    private func index(at position: Double) -> Int {
+        var low = 0, high = lines.count - 1, found = -1
+        while low <= high {
+            let mid = (low + high) / 2
+            if lines[mid].time <= position { found = mid; low = mid + 1 } else { high = mid - 1 }
+        }
+        return found
+    }
+}
+
+struct LyricsStack: View {
+    let lines: [LyricLine]
+    let current: Int
+
+    static let lineHeight: CGFloat = 19
+    static let spacing: CGFloat = 5
+    static var boxHeight: CGFloat { 3 * lineHeight + 2 * spacing }
+
+    var body: some View {
+        let step = Self.lineHeight + Self.spacing
+        VStack(spacing: Self.spacing) {
+            ForEach(lines) { line in
+                let isCurrent = line.id == current
+                Text(line.text)
+                    .font(.system(size: 13.5, weight: .semibold, design: .rounded))
+                    .foregroundStyle(.white.opacity(isCurrent ? 1 : 0.3))
+                    .scaleEffect(isCurrent ? 1 : 0.92)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.75)
+                    .frame(maxWidth: .infinity)
+                    .frame(height: Self.lineHeight)
+            }
+        }
+        .fixedSize(horizontal: false, vertical: true)
+        // Keep the current line in the middle row (before the first line, show it waiting there).
+        .offset(y: step - CGFloat(max(current, 0)) * step)
+        .frame(height: Self.boxHeight, alignment: .top)
+        .clipped()
+        .mask(LinearGradient(stops: [
+            .init(color: .clear, location: 0),
+            .init(color: .black, location: 0.25),
+            .init(color: .black, location: 0.75),
+            .init(color: .clear, location: 1),
+        ], startPoint: .top, endPoint: .bottom))
+        .animation(.spring(response: 0.55, dampingFraction: 0.82), value: current)
+    }
+}
+
+/// Untimed lyrics: a quiet scrollable column.
+struct PlainLyrics: View {
+    let lines: [String]
+
+    var body: some View {
+        ScrollView(.vertical) {
+            VStack(spacing: 4) {
+                ForEach(Array(lines.enumerated()), id: \.offset) { _, line in
+                    Text(line.isEmpty ? " " : line)
+                        .font(.system(size: 12.5, weight: .medium, design: .rounded))
+                        .foregroundStyle(.white.opacity(0.7))
+                        .multilineTextAlignment(.center)
+                        .frame(maxWidth: .infinity)
+                }
+            }
+            .padding(.vertical, 8)
+        }
+        .scrollIndicators(.never)
+        .mask(LinearGradient(stops: [
+            .init(color: .clear, location: 0),
+            .init(color: .black, location: 0.18),
+            .init(color: .black, location: 0.82),
+            .init(color: .clear, location: 1),
+        ], startPoint: .top, endPoint: .bottom))
     }
 }
 
