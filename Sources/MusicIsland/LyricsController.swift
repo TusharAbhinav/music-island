@@ -87,16 +87,16 @@ enum LRCLib {
     }
 
     static func lookup(title: String, artist: String, album: String, duration: Double) async -> Lyrics {
-        // Exact match first (title + artist + album + length), then fuzzier searches.
-        if let record = await get(title: title, artist: artist, album: album, duration: duration),
-           let lyrics = lyrics(from: record) {
-            return lyrics
-        }
-        for query in Set([title, cleaned(title)]) {
-            let results = await search(title: query, artist: artist)
-            if let lyrics = best(results, duration: duration) { return lyrics }
-        }
-        return .none
+        // Gather every candidate (exact match plus looser searches) and pick the best, rather than
+        // taking the first hit — popular Indian songs often exist both in native script and romanized.
+        let short = cleaned(title)
+        async let exact = get(title: title, artist: artist, album: album, duration: duration)
+        async let byTitle = search(["track_name": title, "artist_name": artist])
+        async let byShortTitle = short == title ? [] : search(["track_name": short, "artist_name": artist])
+        async let byQuery = search(["q": "\(short) \(artist)"])
+
+        let candidates = [await exact].compactMap { $0 } + (await byTitle) + (await byShortTitle) + (await byQuery)
+        return best(candidates, duration: duration) ?? .none
     }
 
     private static func get(title: String, artist: String, album: String, duration: Double) async -> Record? {
@@ -108,9 +108,8 @@ enum LRCLib {
         return try? JSONDecoder().decode(Record.self, from: data)
     }
 
-    private static func search(title: String, artist: String) async -> [Record] {
-        let items = [URLQueryItem(name: "track_name", value: title),
-                     URLQueryItem(name: "artist_name", value: artist)]
+    private static func search(_ params: [String: String]) async -> [Record] {
+        let items = params.map { URLQueryItem(name: $0.key, value: $0.value) }
         guard let data = await fetch(path: "/api/search", items: items) else { return [] }
         return (try? JSONDecoder().decode([Record].self, from: data)) ?? []
     }
@@ -128,14 +127,38 @@ enum LRCLib {
         return data
     }
 
-    /// Prefer timed lyrics from a version whose length matches the song.
+    /// Scores candidates: matching length first, then Indian-script over romanized
+    /// (only when such a version exists), then timed over plain. Ties keep the earlier, more exact match.
     private static func best(_ records: [Record], duration: Double) -> Lyrics? {
-        func close(_ r: Record) -> Bool { duration <= 0 || abs((r.duration ?? 0) - duration) < 3 }
-        let ordered = records.filter(close) + records.filter { !close($0) }
-        if let synced = ordered.first(where: { !($0.syncedLyrics ?? "").isEmpty }), let l = lyrics(from: synced) {
-            return l
+        let usable = records.filter { lyrics(from: $0) != nil }
+        let nativeExists = usable.contains(where: isIndicScript)
+
+        func score(_ r: Record) -> Int {
+            var s = 0
+            if duration <= 0 || abs((r.duration ?? 0) - duration) < 3 { s += 4 }
+            if nativeExists, isIndicScript(r) { s += 3 }
+            if !(r.syncedLyrics ?? "").isEmpty { s += 2 }
+            return s
         }
-        return ordered.lazy.compactMap(lyrics(from:)).first
+
+        var bestRecord: Record?
+        var bestScore = Int.min
+        for r in usable where score(r) > bestScore {
+            bestRecord = r
+            bestScore = score(r)
+        }
+        return bestRecord.flatMap(lyrics(from:))
+    }
+
+    /// True when most letters are in an Indian script (Devanagari through Sinhala, U+0900–U+0DFF).
+    private static func isIndicScript(_ record: Record) -> Bool {
+        let text = record.syncedLyrics ?? record.plainLyrics ?? ""
+        var indic = 0, letters = 0
+        for scalar in text.unicodeScalars where scalar.properties.isAlphabetic {
+            letters += 1
+            if (0x0900...0x0DFF).contains(scalar.value) { indic += 1 }
+        }
+        return letters > 0 && Double(indic) / Double(letters) > 0.5
     }
 
     private static func lyrics(from record: Record) -> Lyrics? {
