@@ -331,7 +331,7 @@ struct PlaybackControls: View {
         ZStack {
             HStack(spacing: 26) {
                 IconButton(symbol: "backward.fill", size: 17) { music.previous() }
-                IconButton(symbol: music.isPlaying ? "pause.fill" : "play.fill", size: 25) { music.playPause() }
+                PlayPauseButton(isPlaying: music.isPlaying) { music.playPause() }
                 IconButton(symbol: "forward.fill", size: 17) { music.next() }
             }
 
@@ -364,8 +364,10 @@ struct IconButton: View {
         } label: {
             Image(systemName: symbol)
                 .font(.system(size: size, weight: .semibold))
-                .contentTransition(.symbolEffect(.replace.downUp))
                 .symbolEffect(.bounce.down, value: taps)
+                // A fresh image per symbol: mutating the name under a symbol effect can leave it stale.
+                .id(symbol)
+                .transition(.blurReplace)
                 .foregroundStyle(tint)
                 .frame(width: size * 1.9, height: size * 1.9)
                 .background(Circle().fill(.white.opacity(hovering ? 0.12 : 0)))
@@ -376,6 +378,41 @@ struct IconButton: View {
             withAnimation(.easeOut(duration: 0.15)) { hovering = h }
         }
         .animation(.spring(response: 0.3, dampingFraction: 0.7), value: symbol)
+    }
+}
+
+/// Both glyphs are always present and cross-fade, so the icon can't get stuck on the old symbol.
+struct PlayPauseButton: View {
+    let isPlaying: Bool
+    let action: () -> Void
+
+    private let size: CGFloat = 25
+    @ViewState private var hovering = false
+
+    var body: some View {
+        Button(action: action) {
+            ZStack {
+                glyph("pause.fill", visible: isPlaying)
+                glyph("play.fill", visible: !isPlaying)
+            }
+            .frame(width: size * 1.9, height: size * 1.9)
+            .background(Circle().fill(.white.opacity(hovering ? 0.12 : 0)))
+            .contentShape(Circle())
+        }
+        .buttonStyle(PressableStyle())
+        .onHover { h in
+            withAnimation(.easeOut(duration: 0.15)) { hovering = h }
+        }
+        .animation(.spring(response: 0.32, dampingFraction: 0.68), value: isPlaying)
+    }
+
+    private func glyph(_ name: String, visible: Bool) -> some View {
+        Image(systemName: name)
+            .font(.system(size: size, weight: .semibold))
+            .foregroundStyle(.white)
+            .scaleEffect(visible ? 1 : 0.45)
+            .opacity(visible ? 1 : 0)
+            .blur(radius: visible ? 0 : 3)
     }
 }
 
