@@ -6,6 +6,9 @@ import SwiftUI
 final class IslandViewModel: ObservableObject {
     enum State { case closed, peek, expanded }
 
+    /// Controls that light up under the pointer.
+    enum HoverTarget: Hashable { case previous, playPause, next, lyrics, scrubber }
+
     static let openSpring = Animation.spring(response: 0.44, dampingFraction: 0.74)
     static let closeSpring = Animation.spring(response: 0.38, dampingFraction: 0.9)
 
@@ -13,6 +16,11 @@ final class IslandViewModel: ObservableObject {
     @Published private(set) var showEars = false
     @Published private(set) var showLyrics = false
     @Published var notch = CGSize(width: 185, height: 32)
+    /// Which control the pointer is over. Computed from the pointer position the app already
+    /// polls, because the panel never becomes active and its enter/exit hover events are unreliable.
+    @Published private(set) var hovered: HoverTarget?
+    /// Each control's frame in window coordinates (top-left origin), reported by the views.
+    var targetFrames: [HoverTarget: CGRect] = [:]
 
     private var hovering = false
     private var hoverTask: Task<Void, Never>?
@@ -57,6 +65,16 @@ final class IslandViewModel: ObservableObject {
         case .expanded:
             return CGSize(width: max(460, closedWidth + 60), height: notch.height + 186 + (showLyrics ? Self.lyricsHeight : 0))
         }
+    }
+
+    /// `point` is in window coordinates (top-left origin), or nil when the pointer is outside the island.
+    func updatePointer(_ point: CGPoint?) {
+        var target: HoverTarget?
+        if state == .expanded, let point {
+            target = targetFrames.first { $0.value.contains(point) }?.key
+        }
+        guard target != hovered else { return }
+        withAnimation(.easeOut(duration: 0.15)) { hovered = target }
     }
 
     // MARK: - Transitions

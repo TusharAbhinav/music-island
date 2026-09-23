@@ -149,13 +149,15 @@ struct IslandView: View {
             }
             .padding(.top, 8)
 
-            Scrubber(music: music, isPlaying: music.isPlaying, duration: music.track?.duration ?? 0)
+            Scrubber(music: music, isPlaying: music.isPlaying, duration: music.track?.duration ?? 0,
+                     hovered: vm.hovered == .scrubber)
+                .hoverTarget(.scrubber, in: vm)
                 .padding(.top, 14)
                 .opacity(music.track == nil ? 0.35 : 1)
                 .allowsHitTesting(music.track != nil)
 
-            PlaybackControls(music: music, lyrics: lyrics,
-                             isPlaying: music.isPlaying, lyricsOn: lyrics.enabled)
+            PlaybackControls(music: music, lyrics: lyrics, island: vm,
+                             isPlaying: music.isPlaying, lyricsOn: lyrics.enabled, hovered: vm.hovered)
                 .padding(.top, 6)
 
             if vm.showLyrics {
@@ -271,10 +273,10 @@ struct Scrubber: View {
     let music: MusicController
     let isPlaying: Bool
     let duration: Double
+    let hovered: Bool
     @ViewState private var dragPosition: Double?
-    @ViewState private var hovering = false
 
-    private var active: Bool { hovering || dragPosition != nil }
+    private var active: Bool { hovered || dragPosition != nil }
 
     var body: some View {
         TimelineView(.animation(minimumInterval: 1.0 / 30.0,
@@ -315,7 +317,6 @@ struct Scrubber: View {
                 .foregroundStyle(.white.opacity(active ? 0.75 : 0.45))
             }
         }
-        .onHover { h in hovering = h }
         .animation(.spring(response: 0.3, dampingFraction: 0.7), value: active)
     }
 
@@ -331,24 +332,29 @@ struct PlaybackControls: View {
     // nested observers of MusicController weren't re-rendered after a click until the card reopened.
     let music: MusicController
     let lyrics: LyricsController
+    let island: IslandViewModel
     let isPlaying: Bool
     let lyricsOn: Bool
+    let hovered: IslandViewModel.HoverTarget?
 
     var body: some View {
         ZStack {
             HStack(spacing: 26) {
-                IconButton(symbol: "backward.fill", size: 17) { music.previous() }
-                PlayPauseButton(isPlaying: isPlaying) { music.playPause() }
-                IconButton(symbol: "forward.fill", size: 17) { music.next() }
+                IconButton(symbol: "backward.fill", size: 17, hovered: hovered == .previous) { music.previous() }
+                    .hoverTarget(.previous, in: island)
+                PlayPauseButton(isPlaying: isPlaying, hovered: hovered == .playPause) { music.playPause() }
+                    .hoverTarget(.playPause, in: island)
+                IconButton(symbol: "forward.fill", size: 17, hovered: hovered == .next) { music.next() }
+                    .hoverTarget(.next, in: island)
             }
 
             HStack {
                 Spacer()
                 IconButton(symbol: lyricsOn ? "quote.bubble.fill" : "quote.bubble", size: 13,
-                           tint: .white.opacity(lyricsOn ? 1 : 0.5)) {
+                           tint: .white.opacity(lyricsOn ? 1 : 0.5), hovered: hovered == .lyrics) {
                     lyrics.enabled.toggle()
                 }
-                .help(lyricsOn ? "Hide Lyrics" : "Show Lyrics")
+                .hoverTarget(.lyrics, in: island)
             }
         }
         .frame(maxWidth: .infinity)
@@ -359,9 +365,9 @@ struct IconButton: View {
     let symbol: String
     let size: CGFloat
     var tint: Color = .white
+    let hovered: Bool
     let action: () -> Void
 
-    @ViewState private var hovering = false
     @ViewState private var taps = 0
 
     var body: some View {
@@ -373,14 +379,11 @@ struct IconButton: View {
                 .transition(.blurReplace)
                 .foregroundStyle(tint)
                 .frame(width: size * 1.9, height: size * 1.9)
-                .background(Circle().fill(.white.opacity(hovering ? 0.12 : 0)))
+                .background(Circle().fill(.white.opacity(hovered ? 0.12 : 0)))
                 .contentShape(Circle())
                 .pressable {
                     taps += 1
                     action()
-                }
-                .onHover { h in
-                    withAnimation(.easeOut(duration: 0.15)) { hovering = h }
                 }
                 .animation(.spring(response: 0.3, dampingFraction: 0.7), value: symbol)
     }
@@ -389,10 +392,10 @@ struct IconButton: View {
 /// Both glyphs are always present; the active one springs in while the other shrinks and fades.
 struct PlayPauseButton: View {
     let isPlaying: Bool
+    let hovered: Bool
     let action: () -> Void
 
     private let size: CGFloat = 25
-    @ViewState private var hovering = false
 
     var body: some View {
         ZStack {
@@ -400,12 +403,9 @@ struct PlayPauseButton: View {
             glyph("play.fill", visible: !isPlaying)
         }
         .frame(width: size * 1.9, height: size * 1.9)
-        .background(Circle().fill(.white.opacity(hovering ? 0.12 : 0)))
+        .background(Circle().fill(.white.opacity(hovered ? 0.12 : 0)))
         .contentShape(Circle())
         .pressable(action: action)
-        .onHover { h in
-            withAnimation(.easeOut(duration: 0.15)) { hovering = h }
-        }
         .animation(.spring(response: 0.32, dampingFraction: 0.68), value: isPlaying)
     }
 
@@ -416,6 +416,15 @@ struct PlayPauseButton: View {
             .scaleEffect(visible ? 1 : 0.45)
             .opacity(visible ? 1 : 0)
             .blur(radius: visible ? 0 : 3)
+    }
+}
+
+extension View {
+    /// Reports this view's frame so the island can light it up when the pointer is over it.
+    func hoverTarget(_ target: IslandViewModel.HoverTarget, in island: IslandViewModel) -> some View {
+        onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { frame in
+            island.targetFrames[target] = frame
+        }
     }
 }
 

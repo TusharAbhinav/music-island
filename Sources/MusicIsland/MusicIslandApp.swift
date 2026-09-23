@@ -99,6 +99,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         panel.ignoresMouseEvents = !inside
         island.setHovering(inside)
+        let local = CGPoint(x: point.x - panel.frame.minX, y: panel.frame.maxY - point.y)
+        island.updatePointer(inside ? local : nil)
 
         if inside, hoverTimer == nil {
             // While we own the mouse, global monitors go quiet — poll instead.
