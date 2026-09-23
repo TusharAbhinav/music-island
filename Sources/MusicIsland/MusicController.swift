@@ -385,3 +385,4 @@ extension NSImage {
         return NSColor(hue: best.h, saturation: min(best.s, 0.8), brightness: max(best.b, 0.85), alpha: 1)
     }
 }
+

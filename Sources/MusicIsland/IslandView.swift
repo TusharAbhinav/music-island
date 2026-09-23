@@ -149,16 +149,18 @@ struct IslandView: View {
             }
             .padding(.top, 8)
 
-            Scrubber(music: music)
+            Scrubber(music: music, isPlaying: music.isPlaying, duration: music.track?.duration ?? 0)
                 .padding(.top, 14)
                 .opacity(music.track == nil ? 0.35 : 1)
                 .allowsHitTesting(music.track != nil)
 
-            PlaybackControls(music: music, lyrics: lyrics)
+            PlaybackControls(music: music, lyrics: lyrics,
+                             isPlaying: music.isPlaying, lyricsOn: lyrics.enabled)
                 .padding(.top, 6)
 
             if vm.showLyrics {
-                LyricsPanel(music: music, lyrics: lyrics)
+                LyricsPanel(music: music, state: lyrics.state,
+                            hasTrack: music.track != nil, isPlaying: music.isPlaying)
                     .frame(height: LyricsStack.boxHeight)
                     .padding(.top, 8)
                     .transition(.blurReplace)
@@ -266,7 +268,9 @@ struct Visualizer: View {
 }
 
 struct Scrubber: View {
-    @ObservedObject var music: MusicController
+    let music: MusicController
+    let isPlaying: Bool
+    let duration: Double
     @ViewState private var dragPosition: Double?
     @ViewState private var hovering = false
 
@@ -274,8 +278,7 @@ struct Scrubber: View {
 
     var body: some View {
         TimelineView(.animation(minimumInterval: 1.0 / 30.0,
-                                paused: !music.isPlaying || dragPosition != nil)) { context in
-            let duration = music.track?.duration ?? 0
+                                paused: !isPlaying || dragPosition != nil)) { context in
             let position = dragPosition ?? music.position(at: context.date)
             let progress = duration > 0 ? min(max(position / duration, 0), 1) : 0
 
@@ -324,24 +327,28 @@ struct Scrubber: View {
 }
 
 struct PlaybackControls: View {
-    @ObservedObject var music: MusicController
-    @ObservedObject var lyrics: LyricsController
+    // State arrives as plain values from IslandView rather than via @ObservedObject: in this panel,
+    // nested observers of MusicController weren't re-rendered after a click until the card reopened.
+    let music: MusicController
+    let lyrics: LyricsController
+    let isPlaying: Bool
+    let lyricsOn: Bool
 
     var body: some View {
         ZStack {
             HStack(spacing: 26) {
                 IconButton(symbol: "backward.fill", size: 17) { music.previous() }
-                PlayPauseButton(isPlaying: music.isPlaying) { music.playPause() }
+                PlayPauseButton(isPlaying: isPlaying) { music.playPause() }
                 IconButton(symbol: "forward.fill", size: 17) { music.next() }
             }
 
             HStack {
                 Spacer()
-                IconButton(symbol: lyrics.enabled ? "quote.bubble.fill" : "quote.bubble", size: 13,
-                           tint: .white.opacity(lyrics.enabled ? 1 : 0.5)) {
+                IconButton(symbol: lyricsOn ? "quote.bubble.fill" : "quote.bubble", size: 13,
+                           tint: .white.opacity(lyricsOn ? 1 : 0.5)) {
                     lyrics.enabled.toggle()
                 }
-                .help(lyrics.enabled ? "Hide Lyrics" : "Show Lyrics")
+                .help(lyricsOn ? "Hide Lyrics" : "Show Lyrics")
             }
         }
         .frame(maxWidth: .infinity)
@@ -358,30 +365,28 @@ struct IconButton: View {
     @ViewState private var taps = 0
 
     var body: some View {
-        Button {
-            taps += 1
-            action()
-        } label: {
-            Image(systemName: symbol)
+        Image(systemName: symbol)
                 .font(.system(size: size, weight: .semibold))
                 .symbolEffect(.bounce.down, value: taps)
-                // A fresh image per symbol: mutating the name under a symbol effect can leave it stale.
+                // Symbol changes (e.g. the lyrics toggle) swap in a fresh image with a blur.
                 .id(symbol)
                 .transition(.blurReplace)
                 .foregroundStyle(tint)
                 .frame(width: size * 1.9, height: size * 1.9)
                 .background(Circle().fill(.white.opacity(hovering ? 0.12 : 0)))
                 .contentShape(Circle())
-        }
-        .buttonStyle(PressableStyle())
-        .onHover { h in
-            withAnimation(.easeOut(duration: 0.15)) { hovering = h }
-        }
-        .animation(.spring(response: 0.3, dampingFraction: 0.7), value: symbol)
+                .pressable {
+                    taps += 1
+                    action()
+                }
+                .onHover { h in
+                    withAnimation(.easeOut(duration: 0.15)) { hovering = h }
+                }
+                .animation(.spring(response: 0.3, dampingFraction: 0.7), value: symbol)
     }
 }
 
-/// Both glyphs are always present and cross-fade, so the icon can't get stuck on the old symbol.
+/// Both glyphs are always present; the active one springs in while the other shrinks and fades.
 struct PlayPauseButton: View {
     let isPlaying: Bool
     let action: () -> Void
@@ -390,16 +395,14 @@ struct PlayPauseButton: View {
     @ViewState private var hovering = false
 
     var body: some View {
-        Button(action: action) {
-            ZStack {
-                glyph("pause.fill", visible: isPlaying)
-                glyph("play.fill", visible: !isPlaying)
-            }
-            .frame(width: size * 1.9, height: size * 1.9)
-            .background(Circle().fill(.white.opacity(hovering ? 0.12 : 0)))
-            .contentShape(Circle())
+        ZStack {
+            glyph("pause.fill", visible: isPlaying)
+            glyph("play.fill", visible: !isPlaying)
         }
-        .buttonStyle(PressableStyle())
+        .frame(width: size * 1.9, height: size * 1.9)
+        .background(Circle().fill(.white.opacity(hovering ? 0.12 : 0)))
+        .contentShape(Circle())
+        .pressable(action: action)
         .onHover { h in
             withAnimation(.easeOut(duration: 0.15)) { hovering = h }
         }
@@ -416,26 +419,48 @@ struct PlayPauseButton: View {
     }
 }
 
-struct PressableStyle: ButtonStyle {
-    func makeBody(configuration: Configuration) -> some View {
-        configuration.label
-            .scaleEffect(configuration.isPressed ? 0.84 : 1)
-            .animation(.spring(response: 0.25, dampingFraction: 0.55), value: configuration.isPressed)
+/// Click handling for the island's controls: a press-in spring, and the action on release
+/// unless the pointer was dragged well away.
+struct Pressable: ViewModifier {
+    let action: () -> Void
+    @ViewState private var pressed = false
+
+    func body(content: Content) -> some View {
+        content
+            .scaleEffect(pressed ? 0.84 : 1)
+            .animation(.spring(response: 0.25, dampingFraction: 0.55), value: pressed)
+            .gesture(DragGesture(minimumDistance: 0)
+                .onChanged { _ in if !pressed { pressed = true } }
+                .onEnded { value in
+                    pressed = false
+                    // Treat it as a click unless the pointer was dragged well away.
+                    if hypot(value.translation.width, value.translation.height) < 24 { action() }
+                })
+            .accessibilityAddTraits(.isButton)
+            .accessibilityAction { action() }
+    }
+}
+
+extension View {
+    func pressable(action: @escaping () -> Void) -> some View {
+        modifier(Pressable(action: action))
     }
 }
 
 // MARK: - Lyrics
 
 struct LyricsPanel: View {
-    @ObservedObject var music: MusicController
-    @ObservedObject var lyrics: LyricsController
+    let music: MusicController
+    let state: LyricsController.LoadState
+    let hasTrack: Bool
+    let isPlaying: Bool
 
     var body: some View {
         Group {
-            if music.track == nil {
+            if !hasTrack {
                 status("Lyrics appear when a song plays")
             } else {
-                switch lyrics.state {
+                switch state {
                 case .idle, .loading:
                     status("Finding lyrics…")
                 case .loaded(.none):
@@ -445,7 +470,7 @@ struct LyricsPanel: View {
                 case .loaded(.plain(let lines)):
                     PlainLyrics(lines: lines)
                 case .loaded(.synced(let lines)):
-                    SyncedLyrics(lines: lines, music: music)
+                    SyncedLyrics(lines: lines, music: music, isPlaying: isPlaying)
                 }
             }
         }
@@ -463,10 +488,11 @@ struct LyricsPanel: View {
 /// Timed lyrics: the current line bright and centered, its neighbors dimmed above and below.
 struct SyncedLyrics: View {
     let lines: [LyricLine]
-    @ObservedObject var music: MusicController
+    let music: MusicController
+    let isPlaying: Bool
 
     var body: some View {
-        TimelineView(.animation(minimumInterval: 0.1, paused: !music.isPlaying)) { context in
+        TimelineView(.animation(minimumInterval: 0.1, paused: !isPlaying)) { context in
             // A small lead so each line lights up as it's sung, not just after.
             LyricsStack(lines: lines, current: index(at: music.position(at: context.date) + 0.25))
         }
