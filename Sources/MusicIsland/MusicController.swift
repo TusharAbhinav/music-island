@@ -28,6 +28,9 @@ final class MusicController: NSObject, ObservableObject {
     private var generation = 0
     private var pollTimer: Timer?
     private var artworkTask: Task<Void, Never>?
+    /// After play/pause, Music keeps reporting the old state for ~100–300ms. Hold the optimistic
+    /// state until Music agrees (or this deadline passes) so the button doesn't flicker back.
+    private var pendingPlaying: (value: Bool, until: Date)?
 
     func start() {
         DistributedNotificationCenter.default().addObserver(
@@ -63,6 +66,7 @@ final class MusicController: NSObject, ObservableObject {
     func playPause() {
         freezePosition()
         withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) { isPlaying.toggle() }
+        pendingPlaying = (isPlaying, Date().addingTimeInterval(1.5))
         command(#"tell application "Music" to playpause"#)
     }
 
@@ -128,8 +132,15 @@ final class MusicController: NSObject, ObservableObject {
     private func apply(_ status: ScriptRunner.Status?) {
         guard let status, status.state != "stopped", !status.id.isEmpty else { clear(); return }
 
-        let playing = status.state == "playing"
+        var playing = status.state == "playing"
             || status.state.contains("forward") || status.state.contains("rewind")
+        if let pending = pendingPlaying {
+            if playing == pending.value || Date() > pending.until {
+                pendingPlaying = nil
+            } else {
+                playing = pending.value  // stale report from before the command landed
+            }
+        }
         let newTrack = Track(id: status.id, title: status.title, artist: status.artist,
                              album: status.album, duration: status.duration)
         let changed = newTrack.id != track?.id
