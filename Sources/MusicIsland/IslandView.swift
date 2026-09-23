@@ -39,7 +39,6 @@ struct IslandView: View {
         .clipShape(shape)
         .contentShape(shape)
         .shadow(color: .black.opacity(expanded ? 0.55 : 0), radius: expanded ? 22 : 0, y: 10)
-        .onTapGesture { if !expanded { vm.expand() } }
         .animation(.smooth(duration: 0.45), value: music.track?.id)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .preferredColorScheme(.dark)
@@ -128,8 +127,8 @@ struct IslandView: View {
                 ArtworkView(image: music.artwork, size: 66, radius: 15)
                     .matchedGeometryEffect(id: "art", in: ns)
                     .shadow(color: music.accent.opacity(0.45), radius: 14, y: 4)
-                    .onTapGesture { music.openMusic() }
-                    .help("Open Music")
+                    .scaleEffect(vm.pressed == .artwork ? 0.94 : 1)
+                    .hoverTarget(.artwork, in: vm)
 
                 VStack(alignment: .leading, spacing: 3) {
                     Text(music.track?.title ?? "Not Playing")
@@ -150,14 +149,13 @@ struct IslandView: View {
             .padding(.top, 8)
 
             Scrubber(music: music, isPlaying: music.isPlaying, duration: music.track?.duration ?? 0,
-                     hovered: vm.hovered == .scrubber)
+                     hovered: vm.hovered == .scrubber, scrubFraction: vm.scrubFraction)
                 .hoverTarget(.scrubber, in: vm)
                 .padding(.top, 14)
                 .opacity(music.track == nil ? 0.35 : 1)
-                .allowsHitTesting(music.track != nil)
 
-            PlaybackControls(music: music, lyrics: lyrics, island: vm,
-                             isPlaying: music.isPlaying, lyricsOn: lyrics.enabled, hovered: vm.hovered)
+            PlaybackControls(island: vm, isPlaying: music.isPlaying, lyricsOn: lyrics.enabled,
+                             hovered: vm.hovered, pressed: vm.pressed, taps: vm.taps)
                 .padding(.top, 6)
 
             if vm.showLyrics {
@@ -274,9 +272,10 @@ struct Scrubber: View {
     let isPlaying: Bool
     let duration: Double
     let hovered: Bool
-    @ViewState private var dragPosition: Double?
+    let scrubFraction: Double?
 
-    private var active: Bool { hovered || dragPosition != nil }
+    private var dragPosition: Double? { scrubFraction.map { $0 * duration } }
+    private var active: Bool { hovered || scrubFraction != nil }
 
     var body: some View {
         TimelineView(.animation(minimumInterval: 1.0 / 30.0,
@@ -294,17 +293,6 @@ struct Scrubber: View {
                     }
                     .frame(height: active ? 7 : 4.5)
                     .frame(maxHeight: .infinity)
-                    .contentShape(Rectangle())
-                    .gesture(DragGesture(minimumDistance: 0)
-                        .onChanged { value in
-                            guard duration > 0 else { return }
-                            let fraction = min(max(value.location.x / geo.size.width, 0), 1)
-                            dragPosition = fraction * duration
-                        }
-                        .onEnded { _ in
-                            if let target = dragPosition { music.seek(to: target) }
-                            dragPosition = nil
-                        })
                 }
                 .frame(height: 12)
 
@@ -328,33 +316,34 @@ struct Scrubber: View {
 }
 
 struct PlaybackControls: View {
-    // State arrives as plain values from IslandView rather than via @ObservedObject: in this panel,
-    // nested observers of MusicController weren't re-rendered after a click until the card reopened.
-    let music: MusicController
-    let lyrics: LyricsController
+    // Everything arrives as plain values from IslandView (nested observers of MusicController weren't
+    // re-rendered after clicks in this panel), and clicks are dispatched by IslandViewModel.
     let island: IslandViewModel
     let isPlaying: Bool
     let lyricsOn: Bool
     let hovered: IslandViewModel.HoverTarget?
+    let pressed: IslandViewModel.HoverTarget?
+    let taps: [IslandViewModel.HoverTarget: Int]
 
     var body: some View {
         ZStack {
             HStack(spacing: 26) {
-                IconButton(symbol: "backward.fill", size: 17, hovered: hovered == .previous) { music.previous() }
+                IconButton(symbol: "backward.fill", size: 17,
+                           hovered: hovered == .previous, pressed: pressed == .previous, taps: taps[.previous] ?? 0)
                     .hoverTarget(.previous, in: island)
-                PlayPauseButton(isPlaying: isPlaying, hovered: hovered == .playPause) { music.playPause() }
+                PlayPauseButton(isPlaying: isPlaying, hovered: hovered == .playPause, pressed: pressed == .playPause)
                     .hoverTarget(.playPause, in: island)
-                IconButton(symbol: "forward.fill", size: 17, hovered: hovered == .next) { music.next() }
+                IconButton(symbol: "forward.fill", size: 17,
+                           hovered: hovered == .next, pressed: pressed == .next, taps: taps[.next] ?? 0)
                     .hoverTarget(.next, in: island)
             }
 
             HStack {
                 Spacer()
                 IconButton(symbol: lyricsOn ? "quote.bubble.fill" : "quote.bubble", size: 13,
-                           tint: .white.opacity(lyricsOn ? 1 : 0.5), hovered: hovered == .lyrics) {
-                    lyrics.enabled.toggle()
-                }
-                .hoverTarget(.lyrics, in: island)
+                           tint: .white.opacity(lyricsOn ? 1 : 0.5),
+                           hovered: hovered == .lyrics, pressed: pressed == .lyrics, taps: taps[.lyrics] ?? 0)
+                    .hoverTarget(.lyrics, in: island)
             }
         }
         .frame(maxWidth: .infinity)
@@ -366,26 +355,21 @@ struct IconButton: View {
     let size: CGFloat
     var tint: Color = .white
     let hovered: Bool
-    let action: () -> Void
-
-    @ViewState private var taps = 0
+    let pressed: Bool
+    let taps: Int
 
     var body: some View {
         Image(systemName: symbol)
-                .font(.system(size: size, weight: .semibold))
-                .symbolEffect(.bounce.down, value: taps)
-                // Symbol changes (e.g. the lyrics toggle) swap in a fresh image with a blur.
-                .id(symbol)
-                .transition(.blurReplace)
-                .foregroundStyle(tint)
-                .frame(width: size * 1.9, height: size * 1.9)
-                .background(Circle().fill(.white.opacity(hovered ? 0.12 : 0)))
-                .contentShape(Circle())
-                .pressable {
-                    taps += 1
-                    action()
-                }
-                .animation(.spring(response: 0.3, dampingFraction: 0.7), value: symbol)
+            .font(.system(size: size, weight: .semibold))
+            .symbolEffect(.bounce.down, value: taps)
+            // Symbol changes (e.g. the lyrics toggle) swap in a fresh image with a blur.
+            .id(symbol)
+            .transition(.blurReplace)
+            .foregroundStyle(tint)
+            .frame(width: size * 1.9, height: size * 1.9)
+            .background(Circle().fill(.white.opacity(hovered ? 0.12 : 0)))
+            .scaleEffect(pressed ? 0.84 : 1)
+            .animation(.spring(response: 0.3, dampingFraction: 0.7), value: symbol)
     }
 }
 
@@ -393,7 +377,7 @@ struct IconButton: View {
 struct PlayPauseButton: View {
     let isPlaying: Bool
     let hovered: Bool
-    let action: () -> Void
+    let pressed: Bool
 
     private let size: CGFloat = 25
 
@@ -404,8 +388,7 @@ struct PlayPauseButton: View {
         }
         .frame(width: size * 1.9, height: size * 1.9)
         .background(Circle().fill(.white.opacity(hovered ? 0.12 : 0)))
-        .contentShape(Circle())
-        .pressable(action: action)
+        .scaleEffect(pressed ? 0.84 : 1)
         .animation(.spring(response: 0.32, dampingFraction: 0.68), value: isPlaying)
     }
 
@@ -425,34 +408,6 @@ extension View {
         onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { frame in
             island.targetFrames[target] = frame
         }
-    }
-}
-
-/// Click handling for the island's controls: a press-in spring, and the action on release
-/// unless the pointer was dragged well away.
-struct Pressable: ViewModifier {
-    let action: () -> Void
-    @ViewState private var pressed = false
-
-    func body(content: Content) -> some View {
-        content
-            .scaleEffect(pressed ? 0.84 : 1)
-            .animation(.spring(response: 0.25, dampingFraction: 0.55), value: pressed)
-            .gesture(DragGesture(minimumDistance: 0)
-                .onChanged { _ in if !pressed { pressed = true } }
-                .onEnded { value in
-                    pressed = false
-                    // Treat it as a click unless the pointer was dragged well away.
-                    if hypot(value.translation.width, value.translation.height) < 24 { action() }
-                })
-            .accessibilityAddTraits(.isButton)
-            .accessibilityAction { action() }
-    }
-}
-
-extension View {
-    func pressable(action: @escaping () -> Void) -> some View {
-        modifier(Pressable(action: action))
     }
 }
 

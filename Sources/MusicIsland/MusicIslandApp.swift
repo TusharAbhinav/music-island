@@ -31,6 +31,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let host = IslandHostingView(rootView: IslandView(vm: island, music: music, lyrics: lyrics))
         host.sizingOptions = []
         panel.contentView = host
+        panel.onMouse = { [weak self] type, point in
+            guard let island = self?.island else { return }
+            switch type {
+            case .leftMouseDown: island.mouseDown(at: point)
+            case .leftMouseDragged: island.mouseDragged(to: point)
+            case .leftMouseUp: island.mouseUp(at: point)
+            default: break
+            }
+        }
         layoutPanel()
         panel.orderFrontRegardless()
 
@@ -176,6 +185,23 @@ final class NotchPanel: NSPanel {
 
     override var canBecomeKey: Bool { false }
     override var canBecomeMain: Bool { false }
+
+    /// Receives left-button events with the point in window coordinates (top-left origin).
+    var onMouse: ((NSEvent.EventType, CGPoint) -> Void)?
+
+    override func sendEvent(_ event: NSEvent) {
+        switch event.type {
+        case .leftMouseDown, .leftMouseDragged, .leftMouseUp:
+            if let onMouse, let content = contentView {
+                let p = event.locationInWindow
+                onMouse(event.type, CGPoint(x: p.x, y: content.bounds.height - p.y))
+                return
+            }
+        default:
+            break
+        }
+        super.sendEvent(event)
+    }
 
     // Allow the window to sit over the menu bar.
     override func constrainFrameRect(_ frameRect: NSRect, to screen: NSScreen?) -> NSRect { frameRect }
