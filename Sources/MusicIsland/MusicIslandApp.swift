@@ -53,6 +53,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         setupStatusItem()
         music.start()
+
+        if let dir = ScreenshotRenderer.outputDirectory {
+            ScreenshotRenderer.run(music: music, lyrics: lyrics, island: island, to: dir)
+        }
     }
 
     // MARK: - Placement
