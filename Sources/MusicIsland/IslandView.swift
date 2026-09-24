@@ -89,6 +89,9 @@ struct IslandView: View {
             HStack(spacing: 0) {
                 if vm.showEars {
                     ArtworkView(image: music.artwork, size: vm.notch.height - 12, radius: 6)
+                        // Dimmed while paused, so paused still reads differently from playing.
+                        .opacity(music.isPlaying ? 1 : 0.55)
+                        .animation(.smooth(duration: 0.3), value: music.isPlaying)
                         .matchedGeometryEffect(id: "art", in: ns)
                         .frame(width: vm.earWidth)
                         .transition(.blurReplace.combined(with: .scale(0.5)))

@@ -51,8 +51,9 @@ final class IslandViewModel: ObservableObject {
             }
             .store(in: &cancellables)
 
-        music.$isPlaying.combineLatest(music.$track)
-            .map { playing, track in playing && track != nil }
+        // Show the compact artwork whenever a song is loaded — playing or paused.
+        music.$track
+            .map { $0 != nil }
             .removeDuplicates()
             .sink { [weak self] visible in
                 withAnimation(Self.openSpring) { self?.showEars = visible }
