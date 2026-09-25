@@ -20,6 +20,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     let music = MusicController()
     lazy var lyrics = LyricsController(music: music)
     lazy var island = IslandViewModel(music: music, lyrics: lyrics)
+    private var dockGlow: DockGlow!
 
     private var panel: NotchPanel!
     private var statusItem: NSStatusItem!
@@ -51,6 +52,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             MainActor.assumeIsolated { self?.trackMouse() }
         }
 
+        dockGlow = DockGlow(music: music)
         setupStatusItem()
         music.start()
     }
@@ -138,6 +140,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         open.target = self
         menu.addItem(open)
 
+        let tint = NSMenuItem(title: "Tint Dock", action: #selector(toggleDockTint(_:)), keyEquivalent: "")
+        tint.target = self
+        tint.state = dockGlow.enabled ? .on : .off
+        menu.addItem(tint)
+
         let login = NSMenuItem(title: "Launch at Login", action: #selector(toggleLogin(_:)), keyEquivalent: "")
         login.target = self
         login.state = SMAppService.mainApp.status == .enabled ? .on : .off
@@ -150,6 +157,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc private func openMusic() {
         music.openMusic()
+    }
+
+    @objc private func toggleDockTint(_ item: NSMenuItem) {
+        dockGlow.enabled.toggle()
+        item.state = dockGlow.enabled ? .on : .off
     }
 
     @objc private func toggleLogin(_ item: NSMenuItem) {
