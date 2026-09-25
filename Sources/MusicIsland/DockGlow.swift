@@ -42,8 +42,10 @@ final class DockGlow {
     private var shownAlpha: CGFloat = 0
 
     /// Floor strength at the screen edge (it fades to nothing at the Dock's top) and behind the glass.
-    private let floorIntensity: CGFloat = 0.7
-    private let dockIntensity: Float = 0.85
+    /// Kept well below opaque so the Dock still blurs the windows behind it: the tint colors the glass
+    /// instead of replacing what shows through it.
+    private let floorIntensity: CGFloat = 0.35
+    private let dockIntensity: Float = 0.42
     /// Overall strength while playing and while paused.
     private let playingAlpha: CGFloat = 1
     private let pausedAlpha: CGFloat = 0.5
@@ -255,8 +257,9 @@ final class DockGlow {
         let extent = CGRect(x: 0, y: 0, width: side, height: side)
         let soft = scaled.clampedToExtent()
             .applyingGaussianBlur(sigma: 5)
-            .applyingFilter("CIColorControls", parameters: [kCIInputSaturationKey: 1.35,
-                                                            kCIInputBrightnessKey: 0.03])
+            // More vivid than the cover, since it's shown translucent.
+            .applyingFilter("CIColorControls", parameters: [kCIInputSaturationKey: 1.7,
+                                                            kCIInputBrightnessKey: 0.06])
             .cropped(to: extent)
         return context.createCGImage(soft, from: extent)
     }
